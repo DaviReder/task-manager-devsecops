@@ -1,0 +1,60 @@
+name: Esteira DevSecOps Hackers do Bem
+
+on:
+  push:
+    branches: [ main, develop, staging ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  # --- ETAPA 3: COMPILAÇÃO E VERIFICAÇÃO INICIAL ---
+  build_and_test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Baixar o código do repositório
+        uses: actions/checkout@v3
+
+      - name: Configurar o Python no ambiente
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Validar instalação de dependências (Build)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+  # --- ETAPA 4: ANÁLISE ESTÁTICA DE SEGURANÇA (SAST) ---
+  security_sast:
+    needs: build_and_test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Baixar o código
+        uses: actions/checkout@v3
+
+      - name: Configurar Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Executar o Bandit (Análise do Código)
+        run: |
+          pip install bandit
+          # Analisa a pasta do projeto e gera um relatório em JSON
+          bandit -r todo_project/ -f json -o relatorio-bandit.json || true
+
+      - name: Executar OWASP Dependency-Check (Análise de Bibliotecas)
+        uses: dependency-check/DependencyCheck-action@main
+        with:
+          project: 'TaskManager'
+          path: './requirements.txt'
+          format: 'HTML'
+          out: './artifacts'
+
+      - name: Salvar Relatórios de Segurança como Artefatos
+        uses: actions/upload-artifact@v4
+        with:
+          name: relatorios-sast
+          path: |
+            relatorio-bandit.json
+            artifacts/
