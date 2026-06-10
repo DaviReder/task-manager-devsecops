@@ -37,24 +37,22 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Executar o Bandit (Análise do Código)
+      - name: Executar o Bandit (Análise Estática do Código)
         run: |
           pip install bandit
-          # Analisa a pasta do projeto e gera um relatório em JSON
-          bandit -r todo_project/ -f json -o relatorio-bandit.json || true
+          # Analisa a pasta do projeto e gera um relatório. O "|| true" garante que o pipeline não pare caso ache falhas antigas.
+          bandit -r todo_project/ -f txt -o relatorio-bandit.txt || true
 
-      - name: Executar OWASP Dependency-Check (Análise de Bibliotecas)
-        uses: dependency-check/DependencyCheck-action@main
-        with:
-          project: 'TaskManager'
-          path: './requirements.txt'
-          format: 'HTML'
-          out: './artifacts'
+      - name: Executar Análise de Vulnerabilidades em Dependências (Pip-Audit)
+        run: |
+          pip install pip-audit
+          # Escaneia o requirements.txt buscando CVEs conhecidas
+          pip-audit -r requirements.txt -o relatorio-dependencias.txt || true
 
       - name: Salvar Relatórios de Segurança como Artefatos
         uses: actions/upload-artifact@v4
         with:
-          name: relatorios-sast
+          name: relatorios-seguranca-sast
           path: |
-            relatorio-bandit.json
-            artifacts/
+            relatorio-bandit.txt
+            relatorio-dependencias.txt
