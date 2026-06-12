@@ -85,7 +85,7 @@ jobs:
           target: 'http://172.17.0.1:5000/'
           fail_action: false                # Evita travar a esteira com alertas dinâmicos
           token: ${{ secrets.GITHUB_TOKEN }} # Mantém a comunicação interna com o repositório
-          artifact_name: 'relatorio-seguranca-dast' # Força a action a usar um nome plano sem colidir internamente
+          artifact_name: ''                 # Desativa o upload nativo problemático do ZAP
 
       # --- SALVAMENTO SEGURO DOS ARTEFATOS ---
       - name: Salvar Relatórios do DAST (OWASP ZAP) como Artefatos
