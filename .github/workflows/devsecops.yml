@@ -7,7 +7,7 @@ on:
     branches: [ main, develop ]
 
 jobs:
-  # --- ETAPA 3: COMPILAÇÃO E VERIFICAÇÃO INICIAL ---
+  # --- ETAPA 1: COMPILAÇÃO E VERIFICAÇÃO INICIAL ---
   build_and_test:
     runs-on: ubuntu-latest
     steps:
@@ -24,7 +24,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-  # --- ETAPA 4: ANÁLISE ESTÁTICA DE SEGURANÇA (SAST) ---
+  # --- ETAPA 2: ANÁLISE ESTÁTICA DE SEGURANÇA (SAST) ---
   security_sast:
     needs: build_and_test
     runs-on: ubuntu-latest
@@ -40,19 +40,59 @@ jobs:
       - name: Executar o Bandit (Análise Estática do Código)
         run: |
           pip install bandit
-          # Analisa a pasta do projeto e gera um relatório. O "|| true" garante que o pipeline não pare caso ache falhas antigas.
+          # Analisa a pasta do projeto. O "|| true" garante que o pipeline guarde os achados sem quebrar o fluxo de aprendizagem
           bandit -r todo_project/ -f txt -o relatorio-bandit.txt || true
 
       - name: Executar Análise de Vulnerabilidades em Dependências (Pip-Audit)
         run: |
           pip install pip-audit
-          # Escaneia o requirements.txt buscando CVEs conhecidas
           pip-audit -r requirements.txt -o relatorio-dependencias.txt || true
 
-      - name: Salvar Relatórios de Segurança como Artefatos
+      - name: Salvar Relatórios de Segurança SAST como Artefatos
         uses: actions/upload-artifact@v4
         with:
           name: relatorios-seguranca-sast
           path: |
             relatorio-bandit.txt
             relatorio-dependencias.txt
+
+  # --- ETAPA 3: ENTREGA CONTÍNUA (CD) & ANÁLISE DINÂMICA (DAST) ---
+  deploy_staging_and_dast:
+    needs: security_sast
+    runs-on: ubuntu-latest
+    env:
+      # Injeção segura da SECRET_KEY via GitHub Secrets para corrigir o achado B105 do Bandit
+      FLASK_SECRET_KEY: ${{ secrets.FLASK_SECRET_KEY }}
+    steps:
+      - name: Baixar o código
+        uses: actions/checkout@v3
+
+      - name: Construir Imagem Docker (Ambiente de Staging)
+        run: |
+          docker build -t meu-gerenciador-tarefas:staging .
+
+      - name: Subir Aplicação em Staging (CD Efêmero)
+        run: |
+          # Sobe o container injetando a secret key em produção simulada
+          docker run -d -p 5000:5000 --name app_staging -e FLASK_SECRET_KEY="${{ secrets.FLASK_SECRET_KEY }}" meu-gerenciador-tarefas:staging
+          
+          # Aguarda o Flask inicializar completamente no barramento interno
+          sleep 5
+          
+          # Valida conectividade local de teste
+          curl -v http://localhost:5000 || true
+
+      - name: Executar OWASP ZAP Baseline Scan (DAST)
+        # Utiliza a Action oficial do OWASP ZAP para análise de vulnerabilidades em tempo de execução
+        uses: zaproxy/action-baseline@v0.13.0
+        with:
+          target: 'http://172.17.0.1:5000/' # Aponta para o IP gateway padrão do Docker no Runner do GitHub
+          rules_file_name: '.zap/rules.tsv'
+          cmd_options: '-a'
+          fail_action: false # Mantém o pipeline ativo gerando os artefatos mesmo se encontrar vulnerabilidades web
+
+      - name: Encerrar e Limpar Container de Staging
+        if: always()
+        run: |
+          docker stop app_staging || true
+          docker rm app_staging || true
