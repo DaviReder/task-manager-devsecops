@@ -6,7 +6,7 @@ on:
   pull_request:
     branches: [ main, develop ]
 
-# ADICIONADO: Permite que os relatórios e varreduras gravem dados no fluxo do GitHub
+# Permite que os relatórios e varreduras gravem dados no fluxo do GitHub
 permissions:
   contents: read
   issues: write
@@ -61,7 +61,7 @@ jobs:
             relatorio-bandit.txt
             relatorio-dependencias.txt
 
-  # --- NOVO BLOCO CORRIGIDO PARA O DAST ---
+  # --- ETAPA 5: DEPLOY EM STAGING E ANÁLISE DINÂMICA (DAST) ---
   deploy_staging_and_dast:
     needs: security_sast
     runs-on: ubuntu-latest
@@ -83,5 +83,15 @@ jobs:
         uses: zaproxy/action-baseline@v0.13.0
         with:
           target: 'http://172.17.0.1:5000/'
-          fail_action: false # Evita que avisos comuns quebrem o pipeline com erro vermelho
-          issue_title: 'Análise de Vulnerabilidades Dinâmicas - OWASP ZAP'
+          fail_action: false                # Evita travar a esteira com alertas dinâmicos
+          token: ${{ secrets.GITHUB_TOKEN }} # Mantém a comunicação interna com o repositório
+
+      # --- NOVO PASSO: Sobe os relatórios gerados usando um método seguro e compatível ---
+      - name: Salvar Relatórios do DAST (OWASP ZAP) como Artefatos
+        uses: actions/upload-artifact@v4
+        if: always() # Garante que o relatório seja salvo mesmo se o ZAP achar vulnerabilidades
+        with:
+          name: relatorio-seguranca-dast
+          path: |
+            report_html.html
+            report_md.md
