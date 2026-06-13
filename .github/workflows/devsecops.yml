@@ -6,14 +6,16 @@ on:
   pull_request:
     branches: [ main, develop ]
 
-# Permite que os relatórios e varreduras gravem dados no fluxo do GitHub
 permissions:
   contents: read
   issues: write
   statuses: write
 
 jobs:
-  # --- ETAPA 3: COMPILAÇÃO E VERIFICAÇÃO INICIAL ---
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # ETAPA 3: COMPILAÇÃO, BUILD E TESTES AUTOMATIZADOS
+  # ─────────────────────────────────────────────────────────────────────────
   build_and_test:
     runs-on: ubuntu-latest
     steps:
@@ -30,7 +32,32 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-  # --- ETAPA 4: ANÁLISE ESTÁTICA DE SEGURANÇA (SAST) ---
+      - name: Instalar dependências de teste
+        run: |
+          pip install pytest pytest-cov
+
+      - name: Executar Testes Unitários, de Integração e Funcionais
+        working-directory: todo_project
+        run: |
+          python -m pytest ../tests/test_app.py -v \
+            --tb=short \
+            --cov=todo_project \
+            --cov-report=term-missing \
+            --cov-report=xml:../relatorio-cobertura.xml \
+            --junitxml=../relatorio-testes.xml
+
+      - name: Salvar Relatórios de Testes como Artefatos
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: relatorios-testes
+          path: |
+            relatorio-testes.xml
+            relatorio-cobertura.xml
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # ETAPA 4: ANÁLISE ESTÁTICA DE SEGURANÇA (SAST)
+  # ─────────────────────────────────────────────────────────────────────────
   security_sast:
     needs: build_and_test
     runs-on: ubuntu-latest
@@ -61,7 +88,47 @@ jobs:
             relatorio-bandit.txt
             relatorio-dependencias.txt
 
-  # --- ETAPA 5: DEPLOY EM STAGING E ANÁLISE DINÂMICA (DAST) ---
+  # ─────────────────────────────────────────────────────────────────────────
+  # ETAPA 6: REVIEW ENVIRONMENT (apenas em Pull Requests)
+  # Ambiente temporário e efêmero criado automaticamente para avaliação
+  # manual antes do merge — exigência da Entrega Contínua (CD).
+  # ─────────────────────────────────────────────────────────────────────────
+  review_environment:
+    needs: security_sast
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Baixar o código
+        uses: actions/checkout@v3
+
+      - name: Construir imagem Docker para revisão
+        run: |
+          docker build -t meu-gerenciador-tarefas:review-pr-${{ github.event.number }} .
+
+      - name: Subir ambiente de revisão temporário
+        run: |
+          docker run -d \
+            -p 5000:5000 \
+            --name app_review_pr${{ github.event.number }} \
+            -e FLASK_SECRET_KEY="${{ secrets.FLASK_SECRET_KEY }}" \
+            meu-gerenciador-tarefas:review-pr-${{ github.event.number }}
+          sleep 5
+
+      - name: Validar saúde do ambiente de revisão
+        run: |
+          curl --fail --retry 3 --retry-delay 3 http://172.17.0.1:5000/ \
+            && echo "Ambiente de revisão OK — PR ${{ github.event.number }}" \
+            || echo "Ambiente iniciado mas sem resposta HTTP"
+
+      - name: Encerrar ambiente de revisão temporário
+        if: always()
+        run: |
+          docker stop app_review_pr${{ github.event.number }} || true
+          docker rm   app_review_pr${{ github.event.number }} || true
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # ETAPAS 5 e 6: DEPLOY EM STAGING E ANÁLISE DINÂMICA (DAST)
+  # ─────────────────────────────────────────────────────────────────────────
   deploy_staging_and_dast:
     needs: security_sast
     runs-on: ubuntu-latest
@@ -75,23 +142,23 @@ jobs:
 
       - name: Subir Aplicação em Staging (CD Efêmero)
         run: |
-          docker run -d -p 5000:5000 --name app_staging -e FLASK_SECRET_KEY="${{ secrets.FLASK_SECRET_KEY }}" meu-gerenciador-tarefas:staging
-          # Aguarda 5 segundos para o Flask inicializar completamente
+          docker run -d -p 5000:5000 --name app_staging \
+            -e FLASK_SECRET_KEY="${{ secrets.FLASK_SECRET_KEY }}" \
+            meu-gerenciador-tarefas:staging
           sleep 5
 
       - name: Executar OWASP ZAP Baseline Scan (DAST)
         uses: zaproxy/action-baseline@v0.13.0
-        continue-on-error: true         # <--- SOLUÇÃO: Impede que a falha interna de API do ZAP quebre o pipeline
+        continue-on-error: true
         with:
           target: 'http://172.17.0.1:5000/'
-          fail_action: false                # Evita travar a esteira com alertas dinâmicos
-          token: ${{ secrets.GITHUB_TOKEN }} # Mantém a comunicação interna com o repositório
-          artifact_name: ''                 # Desativa o upload nativo problemático do ZAP
+          fail_action: false
+          token: ${{ secrets.GITHUB_TOKEN }}
+          artifact_name: ''
 
-      # --- SALVAMENTO SEGURO DOS ARTEFATOS ---
       - name: Salvar Relatórios do DAST (OWASP ZAP) como Artefatos
         uses: actions/upload-artifact@v4
-        if: always() # Garante que os relatórios sejam salvos mesmo se o passo anterior falhar
+        if: always()
         with:
           name: relatorio-seguranca-dast
           path: |
